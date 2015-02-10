@@ -22,8 +22,7 @@ import org.apache.spark.sql.catalyst.errors.TreeNodeException
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.rules._
-import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.types.IntegerType
+import org.apache.spark.sql.types.{ArrayType, StructField, StructType, IntegerType}
 
 /**
  * A trivial [[Analyzer]] with an [[EmptyCatalog]] and [[EmptyFunctionRegistry]]. Used for testing
@@ -69,8 +68,9 @@ class Analyzer(catalog: Catalog,
       typeCoercionRules ++
       extendedRules : _*),
     Batch("Check Analysis", Once,
-      CheckResolution,
-      CheckAggregation),
+      CheckResolution ::
+      CheckAggregation ::
+      Nil: _*),
     Batch("AnalysisOperators", fixedPoint,
       EliminateAnalysisOperators)
   )
@@ -250,6 +250,18 @@ class Analyzer(catalog: Catalog,
         Project(
           projectList.flatMap {
             case s: Star => s.expand(child.output, resolver)
+            case Alias(f @ UnresolvedFunction(_, args), name) if containsStar(args) =>
+              val expandedArgs = args.flatMap {
+                case s: Star => s.expand(child.output, resolver)
+                case o => o :: Nil
+              }
+              Alias(child = f.copy(children = expandedArgs), name)() :: Nil
+            case Alias(c @ CreateArray(args), name) if containsStar(args) =>
+              val expandedArgs = args.flatMap {
+                case s: Star => s.expand(child.output, resolver)
+                case o => o :: Nil
+              }
+              Alias(c.copy(children = expandedArgs), name)() :: Nil
             case o => o :: Nil
           },
           child)
@@ -272,26 +284,18 @@ class Analyzer(catalog: Catalog,
 
       case q: LogicalPlan =>
         logTrace(s"Attempting to resolve ${q.simpleString}")
-        q transformExpressions {
-          case u @ UnresolvedAttribute(name)
-              if resolver(name, VirtualColumn.groupingIdName) &&
-                q.isInstanceOf[GroupingAnalytics] =>
-              // Resolve the virtual column GROUPING__ID for the operator GroupingAnalytics
+        q transformExpressionsUp  {
+          case u @ UnresolvedAttribute(name) if resolver(name, VirtualColumn.groupingIdName) &&
+            q.isInstanceOf[GroupingAnalytics] =>
+            // Resolve the virtual column GROUPING__ID for the operator GroupingAnalytics
             q.asInstanceOf[GroupingAnalytics].gid
           case u @ UnresolvedAttribute(name) =>
             // Leave unchanged if resolution fails.  Hopefully will be resolved next round.
             val result = q.resolveChildren(name, resolver).getOrElse(u)
             logDebug(s"Resolving $u to $result")
             result
-
-          // Resolve field names using the resolver.
-          case f @ GetField(child, fieldName) if !f.resolved && child.resolved =>
-            child.dataType match {
-              case StructType(fields) =>
-                val resolvedFieldName = fields.map(_.name).find(resolver(_, fieldName))
-                resolvedFieldName.map(n => f.copy(fieldName = n)).getOrElse(f)
-              case _ => f
-            }
+          case UnresolvedGetField(child, fieldName) if child.resolved =>
+            resolveGetField(child, fieldName)
         }
     }
 
@@ -299,7 +303,35 @@ class Analyzer(catalog: Catalog,
      * Returns true if `exprs` contains a [[Star]].
      */
     protected def containsStar(exprs: Seq[Expression]): Boolean =
-      exprs.collect { case _: Star => true}.nonEmpty
+      exprs.exists(_.collect { case _: Star => true }.nonEmpty)
+
+    /**
+     * Returns the resolved `GetField`, and report error if no desired field or over one
+     * desired fields are found.
+     */
+    protected def resolveGetField(expr: Expression, fieldName: String): Expression = {
+      def findField(fields: Array[StructField]): Int = {
+        val checkField = (f: StructField) => resolver(f.name, fieldName)
+        val ordinal = fields.indexWhere(checkField)
+        if (ordinal == -1) {
+          sys.error(
+            s"No such struct field $fieldName in ${fields.map(_.name).mkString(", ")}")
+        } else if (fields.indexWhere(checkField, ordinal + 1) != -1) {
+          sys.error(s"Ambiguous reference to fields ${fields.filter(checkField).mkString(", ")}")
+        } else {
+          ordinal
+        }
+      }
+      expr.dataType match {
+        case StructType(fields) =>
+          val ordinal = findField(fields)
+          StructGetField(expr, fields(ordinal), ordinal)
+        case ArrayType(StructType(fields), containsNull) =>
+          val ordinal = findField(fields)
+          ArrayGetField(expr, fields(ordinal), ordinal, containsNull)
+        case otherType => sys.error(s"GetField is not valid on fields of type $otherType")
+      }
+    }
   }
 
   /**

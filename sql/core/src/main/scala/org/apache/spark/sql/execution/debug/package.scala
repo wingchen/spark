@@ -22,7 +22,7 @@ import scala.collection.mutable.HashSet
 import org.apache.spark.{AccumulatorParam, Accumulator, SparkContext}
 import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.SparkContext._
-import org.apache.spark.sql.{SchemaRDD, Row}
+import org.apache.spark.sql.{SQLConf, SQLContext, DataFrame, Row}
 import org.apache.spark.sql.catalyst.trees.TreeNodeRef
 import org.apache.spark.sql.types._
 
@@ -38,11 +38,20 @@ import org.apache.spark.sql.types._
 package object debug {
 
   /**
+   * Augments [[SQLContext]] with debug methods.
+   */
+  implicit class DebugSQLContext(sqlContext: SQLContext) {
+    def debug() = {
+      sqlContext.setConf(SQLConf.DATAFRAME_EAGER_ANALYSIS, "false")
+    }
+  }
+
+  /**
    * :: DeveloperApi ::
-   * Augments SchemaRDDs with debug methods.
+   * Augments [[DataFrame]]s with debug methods.
    */
   @DeveloperApi
-  implicit class DebugQuery(query: SchemaRDD) {
+  implicit class DebugQuery(query: DataFrame) {
     def debug(): Unit = {
       val plan = query.queryExecution.executedPlan
       val visited = new collection.mutable.HashSet[TreeNodeRef]()
@@ -166,7 +175,7 @@ package object debug {
 
   /**
    * :: DeveloperApi ::
-   * Augments SchemaRDDs with debug methods.
+   * Augments [[DataFrame]]s with debug methods.
    */
   @DeveloperApi
   private[sql] case class TypeCheck(child: SparkPlan) extends SparkPlan {
