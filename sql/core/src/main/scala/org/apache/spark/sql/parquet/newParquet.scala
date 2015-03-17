@@ -19,6 +19,7 @@ package org.apache.spark.sql.parquet
 import java.io.IOException
 import java.lang.{Double => JDouble, Float => JFloat, Long => JLong}
 import java.math.{BigDecimal => JBigDecimal}
+import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.{Date, List => JList}
 
@@ -115,9 +116,15 @@ private[sql] class DefaultSource
     }
 
     val relation = if (doInsertion) {
+      // This is a hack. We always set nullable/containsNull/valueContainsNull to true
+      // for the schema of a parquet data.
+      val df =
+        sqlContext.createDataFrame(
+          data.queryExecution.toRdd,
+          data.schema.asNullable)
       val createdRelation =
-        createRelation(sqlContext, parameters, data.schema).asInstanceOf[ParquetRelation2]
-      createdRelation.insert(data, overwrite = mode == SaveMode.Overwrite)
+        createRelation(sqlContext, parameters, df.schema).asInstanceOf[ParquetRelation2]
+      createdRelation.insert(df, overwrite = mode == SaveMode.Overwrite)
       createdRelation
     } else {
       // If the save mode is Ignore, we will just create the relation based on existing data.
@@ -153,7 +160,8 @@ private[sql] case class ParquetRelation2(
     maybeSchema: Option[StructType] = None,
     maybePartitionSpec: Option[PartitionSpec] = None)(
     @transient val sqlContext: SQLContext)
-  extends CatalystScan
+  extends BaseRelation
+  with CatalystScan
   with InsertableRelation
   with SparkHadoopMapReduceUtil
   with Logging {
@@ -237,11 +245,10 @@ private[sql] case class ParquetRelation2(
      * Refreshes `FileStatus`es, footers, partition spec, and table schema.
      */
     def refresh(): Unit = {
-      val fs = FileSystem.get(sparkContext.hadoopConfiguration)
-
       // Support either reading a collection of raw Parquet part-files, or a collection of folders
       // containing Parquet files (e.g. partitioned Parquet table).
       val baseStatuses = paths.distinct.map { p =>
+        val fs = FileSystem.get(URI.create(p), sparkContext.hadoopConfiguration)
         val qualified = fs.makeQualified(new Path(p))
 
         if (!fs.exists(qualified) && maybeSchema.isDefined) {
@@ -255,6 +262,7 @@ private[sql] case class ParquetRelation2(
 
       // Lists `FileStatus`es of all leaf nodes (files) under all base directories.
       val leaves = baseStatuses.flatMap { f =>
+        val fs = FileSystem.get(f.getPath.toUri, sparkContext.hadoopConfiguration)
         SparkHadoopUtil.get.listLeafStatuses(fs, f.getPath).filter { f =>
           isSummaryFile(f.getPath) ||
             !(f.getPath.getName.startsWith("_") || f.getPath.getName.startsWith("."))
