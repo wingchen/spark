@@ -56,7 +56,7 @@ SQLContext sqlContext = new org.apache.spark.sql.SQLContext(sc);
 <div data-lang="python"  markdown="1">
 
 The entry point into all relational functionality in Spark is the
-[`SQLContext`](api/python/pyspark.sql.SQLContext-class.html) class, or one
+[`SQLContext`](api/python/pyspark.sql.html#pyspark.sql.SQLContext) class, or one
 of its decedents.  To create a basic `SQLContext`, all you need is a SparkContext.
 
 {% highlight python %}
@@ -170,14 +170,14 @@ df.select("name").show()
 // Justin
 
 // Select everybody, but increment the age by 1
-df.select("name", df("age") + 1).show()
+df.select(df("name"), df("age") + 1).show()
 // name    (age + 1)
 // Michael null
 // Andy    31
 // Justin  20
 
 // Select people older than 21
-df.filter(df("name") > 21).show()
+df.filter(df("age") > 21).show()
 // age name
 // 30  Andy
 
@@ -220,14 +220,14 @@ df.select("name").show();
 // Justin
 
 // Select everybody, but increment the age by 1
-df.select("name", df.col("age").plus(1)).show();
+df.select(df.col("name"), df.col("age").plus(1)).show();
 // name    (age + 1)
 // Michael null
 // Andy    31
 // Justin  20
 
 // Select people older than 21
-df.filter(df("name") > 21).show();
+df.filter(df.col("age").gt(21)).show();
 // age name
 // 30  Andy
 
@@ -270,14 +270,14 @@ df.select("name").show()
 ## Justin
 
 # Select everybody, but increment the age by 1
-df.select("name", df.age + 1).show()
+df.select(df.name, df.age + 1).show()
 ## name    (age + 1)
 ## Michael null
 ## Andy    31
 ## Justin  20
 
 # Select people older than 21
-df.filter(df.name > 21).show()
+df.filter(df.age > 21).show()
 ## age name
 ## 30  Andy
 
@@ -509,8 +509,11 @@ val people = sc.textFile("examples/src/main/resources/people.txt")
 // The schema is encoded in a string
 val schemaString = "name age"
 
-// Import Spark SQL data types and Row.
-import org.apache.spark.sql._
+// Import Row.
+import org.apache.spark.sql.Row;
+
+// Import Spark SQL data types
+import org.apache.spark.sql.types.{StructType,StructField,StringType};
 
 // Generate the schema based on the string of schema
 val schema =
@@ -621,7 +624,8 @@ tuples or lists in the RDD created in the step 1.
 For example:
 {% highlight python %}
 # Import SQLContext and data types
-from pyspark.sql import *
+from pyspark.sql import SQLContext
+from pyspark.sql.types import *
 
 # sc is an existing SparkContext.
 sqlContext = SQLContext(sc)
@@ -1367,7 +1371,10 @@ the Data Sources API.  The following options are supported:
     <td>
       These options must all be specified if any of them is specified.  They describe how to
       partition the table when reading in parallel from multiple workers.
-      <code>partitionColumn</code> must be a numeric column from the table in question.
+      <code>partitionColumn</code> must be a numeric column from the table in question. Notice
+      that <code>lowerBound</code> and <code>upperBound</code> are just used to decide the
+      partition stride, not for filtering the rows in table. So all rows in the table will be
+      partitioned and returned.
     </td>
   </tr>
 </table>
@@ -1402,7 +1409,7 @@ DataFrame jdbcDF = sqlContext.load("jdbc", options)
 
 {% highlight python %}
 
-df = sqlContext.load("jdbc", url="jdbc:postgresql:dbserver", dbtable="schema.tablename")
+df = sqlContext.load(source="jdbc", url="jdbc:postgresql:dbserver", dbtable="schema.tablename")
 
 {% endhighlight %}
 
@@ -1638,7 +1645,7 @@ moved into the udf object in `SQLContext`.
 <div data-lang="scala"  markdown="1">
 {% highlight java %}
 
-sqlCtx.udf.register("strLen", (s: String) => s.length())
+sqlContext.udf.register("strLen", (s: String) => s.length())
 
 {% endhighlight %}
 </div>
@@ -1646,7 +1653,7 @@ sqlCtx.udf.register("strLen", (s: String) => s.length())
 <div data-lang="java"  markdown="1">
 {% highlight java %}
 
-sqlCtx.udf().register("strLen", (String s) -> { s.length(); });
+sqlContext.udf().register("strLen", (String s) -> { s.length(); });
 
 {% endhighlight %}
 </div>
@@ -1780,6 +1787,7 @@ in Hive deployments.
 
 
 **Esoteric Hive Features**
+
 * `UNION` type
 * Unique join
 * Column statistics collecting: Spark SQL does not piggyback scans to collect column statistics at
