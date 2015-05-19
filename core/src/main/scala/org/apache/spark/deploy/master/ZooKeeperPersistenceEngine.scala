@@ -26,6 +26,7 @@ import org.apache.curator.framework.CuratorFramework
 import org.apache.zookeeper.CreateMode
 
 import org.apache.spark.{Logging, SparkConf}
+import org.apache.spark.deploy.SparkCuratorUtil
 
 
 private[master] class ZooKeeperPersistenceEngine(conf: SparkConf, val serialization: Serialization)
@@ -46,7 +47,7 @@ private[master] class ZooKeeperPersistenceEngine(conf: SparkConf, val serializat
     zk.delete().forPath(WORKING_DIR + "/" + name)
   }
 
-  override def read[T: ClassTag](prefix: String) = {
+  override def read[T: ClassTag](prefix: String): Seq[T] = {
     val file = zk.getChildren.forPath(WORKING_DIR).filter(_.startsWith(prefix))
     file.map(deserializeFromFile[T]).flatten
   }
